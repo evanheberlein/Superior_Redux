@@ -1,0 +1,338 @@
+---
+title: "Superior data analysis"
+author: "Evan Heberlein"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r include=FALSE}
+# Packages
+library(tidyverse)
+library(janitor)
+library(ggplot2)
+library(vegan)
+library(BiodiversityR)
+library(reshape2)
+```
+
+```{r message=FALSE, warning=FALSE}
+# Import & tidy vegetation data
+
+superior_tidy <- read_csv("C:/Users/evanh/Box/Bren/Winter20/ESM439/Superior_Redux/SuperiorR.csv") %>% 
+  clean_names() %>% 
+  mutate(species_type = na_if(species_type, "NA")) %>% 
+  mutate(species = na_if(species, "NA")) %>% 
+  mutate(species = 
+           replace(species, species == "Spirodela polyriza", "Spirodela polyrhiza")) %>% 
+  mutate(species = 
+           replace(species, species == "Spirodela polyhriza", "Spirodela polyrhiza")) %>% 
+  mutate(species = 
+           replace(species, species == "Salix sp.", "Salix spp.")) %>% 
+  mutate(species = 
+           replace(species, species == "Sagitaria rigida", "Sagittaria rigida")) %>% 
+  mutate(species = 
+           replace(species, species == "Myriophyllum spp", "Myriophyllum spp.")) %>% 
+  mutate(species = 
+           replace(species, species == "Carex ultriculata", "Carex utriculata")) %>% 
+  mutate(species = 
+           replace(species, species == "Carex lacustria", "Carex lacustris")) %>% 
+  mutate(species = 
+           replace(species, species == "Calamogrostis canadensis", "Calamagrostis canadensis")) %>% 
+  mutate(species = 
+           replace(species, species == "Typha sp.", "Typha spp.")) %>% 
+  mutate(species = 
+           replace(species, species == "Typha spp", "Typha spp."))
+
+superior_table <- superior_tidy %>% 
+  select(-elevation_cm_above_msl) %>% 
+  drop_na() %>% 
+  #complete(species_type, year, plot_id) %>% # creates NA values for species - comes out as column headers in pivot
+  distinct() %>% # Removes duplicate rows - eliminates list issue w/ pivot_wider
+  mutate(species_type = 
+           replace(species_type, species_type == "emergent", "Emergent")) %>% 
+  mutate(species_type = 
+           replace(species_type, species_type == "submerged", "Submerged")) %>%
+  mutate(species_type = 
+           replace(species_type, species_type == "floating", "Floating")) %>% 
+  mutate(plot_id = replace(plot_id, plot_id == 1, "Berm")) %>% 
+  mutate(plot_id = replace(plot_id, plot_id == 2, "Shallow")) %>% 
+  mutate(plot_id = replace(plot_id, plot_id == 3, "Deep")) %>% 
+  mutate(plot_id = replace(plot_id, plot_id == 4, "Edge")) %>%  
+  mutate(species_type = species_type %>% 
+           factor() %>% 
+           fct_relevel("Emergent","Submerged", "Floating")) %>% 
+  mutate(plot_id = plot_id %>% 
+           factor() %>% 
+           fct_relevel("Berm", "Shallow", "Deep", "Edge"))
+
+superior_summary <- superior_table %>% 
+  group_by(plot_id, year, species_type) %>% 
+  summarize(
+    mean_pct = mean(percent_cover),
+    sd_pct = sd(percent_cover),
+    sample_size = n(),
+    se_pct = sd(percent_cover)/sqrt(n()),
+    var_pct = var(percent_cover)
+  )
+
+superior_summary
+
+mean_pct <- data_frame(superior_summary$mean_pct)
+sd_pct <- data_frame(superior_summary$sd_pct)
+
+# Visualize vegetation data
+veg_fig_bar <- ggplot() +
+  geom_col(data = superior_table,
+           aes(x = plot_id,
+               y = percent_cover,
+               fill = fct_relevel(species_type)),
+           na.rm = TRUE,
+           position = position_dodge(.8)) +
+  facet_grid(~year) +
+  scale_fill_manual(values=c("#a1dab4", "#41b6c4", "#253494")) + #ColorBrewer
+  labs(x = "Plot type",
+       y = "% cover",
+       fill = "Vegetation type") +
+  theme_bw() +
+  theme(legend.position = "top") +
+  scale_y_continuous(expand = c(0,0)) #+
+  #geom_errorbar(data = superior_summary, aes(x = year, ymin = mean_pct - sd_pct, ymax = mean_pct + sd_pct))
+
+veg_fig_bar
+
+# Figure - try jitter/beeswarm (widens like violin - could be overwhelming)
+# Box plots in a square (make axis >100)
+# Relevant paper: https://joss.theoj.org/papers/10.21105/joss.00037.pdf
+
+veg_fig_box <- ggplot() +
+  geom_boxplot(data = superior_table,
+           aes(x = plot_id,
+               y = percent_cover,
+               fill = fct_relevel(species_type)),
+           na.rm = TRUE) +
+  facet_wrap(~year,
+             nrow = 2) +
+  scale_fill_manual(values=c("#a1dab4", "#41b6c4", "#253494")) + #ColorBrewer
+  labs(x = "Plot type",
+       y = "% cover",
+       fill = "Vegetation type") +
+  theme_bw() +
+  theme(legend.position = "top") +
+  scale_y_continuous(expand = c(0,0),
+                     limits = c(0,110))
+
+veg_fig_box
+
+# Facet by plot id to show from year to year better, then can free y for easier viz? - switch year and plot_id in code
+# Put vertical gridlines (light gray) b/w each column
+```
+
+```{r}
+# ANOVA - vegetation type
+# Shon Schooler 
+# Feb 3, 2017
+# Analysis of water level impact on vegetation in Pokegama
+# rm(list=ls())
+veg<-read.csv("C:/Users/evanh/Box/Bren/Winter20/ESM439/Superior_Redux/Superior/Data/ANOVA/RWaterlevelveg3_ShonANOVA.csv")
+
+#ANOVA: change Emergent to SubPlusFloat for second test
+veg.mod.Emergent <- lm(Emergent ~ Zone*Year, data=veg)
+veg.mod.SubPlusFloat <- lm(Emergent ~ Zone*Year, data=veg)
+
+#assumptions
+par(mfrow=c(2,2))
+plot(veg.mod.Emergent)
+plot(veg.mod.SubPlusFloat)
+
+anova(veg.mod.Emergent)
+anova(veg.mod.SubPlusFloat)
+
+# ANOVA - wetland area
+# rm(list=ls())
+area<-read.csv("C:/Users/evanh/Box/Bren/Winter20/ESM439/Superior_Redux/Superior/Data/ANOVA/AreaANOVA.csv")
+
+#ANOVA: change Emergent to Open for second test (results are identical as these variables are inverse)
+area.mod <- lm(Emergent ~ Year, data=area)
+
+#assumptions
+par(mfrow=c(2,2))
+plot(area.mod)
+
+anova(area.mod)
+```
+
+
+```{r}
+# Diversity analysis - rank abundance plots
+
+species_list <- distinct_at(superior_table, vars(species, species_type))
+
+categories <- superior_table %>% 
+  select(-species, -percent_cover, -transect_id) %>% 
+  distinct() %>% 
+  as.data.frame()
+
+superior_diversity <-  pivot_wider(superior_table,
+              names_from = "species",
+              values_from = "percent_cover") #%>% 
+              #values_fn = list(percent_cover = summary_fun)) %>% #what did this do?
+  #rm(superior_diversity$NA) %>% 
+  #as_data_frame()
+
+superior_rank <- superior_diversity %>% 
+  select(-species_type,
+         -year,
+         -plot_id,
+         -transect_id) %>% 
+  select(sort(tidyselect::peek_vars())) %>% #alphabetical order - not important?  
+  #replace_na(list((Acorus americanus:Potentilla palustris) = 0)) %>% 
+  replace(is.na(.),0) %>% 
+  as.data.frame() 
+
+superior_rank.env <- superior_diversity %>% 
+  select(species_type,
+         year,
+         plot_id,
+         transect_id) %>% 
+  as.data.frame()
+
+superior_xr <- rankabundance(superior_rank,
+                             factor = "superior_rank.env$year") # This works, can't factor
+
+# Possible help for faceting in rankabunplot: https://stackoverflow.com/questions/43903937/faceting-in-rankabunplot
+
+# Other diversity stats analyses in R: https://kembellab.ca/r-workshop/biodivR/SK_Biodiversity_R.html
+
+# rankabundance(x = superior_rank,
+#   y = superior_rank.env,
+#   factor = "year",
+#   level = 1)
+
+# distinct(superior_table)
+
+rankabunplot(superior_xr)
+
+#rankabuncomp(x = superior_rank,y = superior_rank.env, factor = "year")
+
+# Making sub-groups for each year - can add multiple "xr"s to same rankabundplot?
+
+rank_2014 <- superior_diversity %>% 
+  filter(year == 2014) %>% 
+  select(-species_type,
+         -year,
+         -plot_id,
+         -transect_id) %>% 
+  select(sort(tidyselect::peek_vars())) %>% #alphabetical order - not important?  
+  #replace_na(list((Acorus americanus:Potentilla palustris) = 0)) %>% 
+  replace(is.na(.),0) %>%
+  as.data.frame() 
+
+rank_2014.env <- superior_diversity %>% 
+  filter(year == 2014) %>% 
+  select(species_type,
+         year,
+         plot_id,
+         transect_id) %>% 
+  as.data.frame()
+                             
+xr_2014 <- as.data.frame(rankabundance(rank_2014))
+xr_2014 <- xr_2014 %>% mutate(species = rownames(xr_2014))
+xr_2014 <- xr_2014 %>% left_join(x = xr_2014, y = species_list, by = "species")
+
+rank_2015 <- superior_diversity %>% 
+  filter(year == 2015) %>% 
+  select(-species_type,
+         -year,
+         -plot_id,
+         -transect_id) %>% 
+  select(sort(tidyselect::peek_vars())) %>% #alphabetical order - not important?  
+  #replace_na(list((Acorus americanus:Potentilla palustris) = 0)) %>% 
+  replace(is.na(.),0) %>%
+  as.data.frame() 
+
+rank_2015.env <- superior_diversity %>% 
+  filter(year == 2015) %>% 
+  select(species_type,
+         year,
+         plot_id,
+         transect_id) %>% 
+  as.data.frame()
+                             
+xr_2015 <- as.data.frame(rankabundance(rank_2015))
+xr_2015 <- xr_2015 %>% mutate(species = rownames(xr_2015))
+xr_2015 <- xr_2015 %>% left_join(x = xr_2015, y = species_list, by = "species")
+
+rank_2016 <- superior_diversity %>% 
+  filter(year == 2016) %>% 
+  select(-species_type,
+         -year,
+         -plot_id,
+         -transect_id) %>% 
+  select(sort(tidyselect::peek_vars())) %>% #alphabetical order - not important?  
+  #replace_na(list((Acorus americanus:Potentilla palustris) = 0)) %>% 
+  replace(is.na(.),0) %>%
+  as.data.frame() 
+
+rank_2016.env <- superior_diversity %>% 
+  filter(year == 2016) %>% 
+  select(species_type,
+         year,
+         plot_id,
+         transect_id) %>% 
+  as.data.frame()
+                             
+xr_2016 <- as.data.frame(rankabundance(rank_2016))
+xr_2016 <- xr_2016 %>% mutate(species = rownames(xr_2016))
+xr_2016 <- xr_2016 %>% left_join(x = xr_2016, y = species_list, by = "species")
+
+rank_2017 <- superior_diversity %>% 
+  filter(year == 2017) %>% 
+  select(-species_type,
+         -year,
+         -plot_id,
+         -transect_id) %>% 
+  select(sort(tidyselect::peek_vars())) %>% #alphabetical order - not important?  
+  #replace_na(list((Acorus americanus:Potentilla palustris) = 0)) %>% 
+  replace(is.na(.),0) %>%
+  as.data.frame() 
+
+rank_2017.env <- superior_diversity %>% 
+  filter(year == 2017) %>% 
+  select(species_type,
+         year,
+         plot_id,
+         transect_id) %>% 
+#  add_column()
+  as.data.frame()
+                             
+xr_2017 <- as.data.frame(rankabundance(rank_2017))
+xr_2017 <- xr_2017 %>% mutate(species = rownames(xr_2017))
+xr_2017 <- xr_2017 %>% left_join(x = xr_2017, y = species_list, by = "species")
+
+# rankabundance(rank_2017)
+
+# rankabunplot(xr_2014)
+# rankabunplot(xr_2015)
+# rankabunplot(xr_2016)
+# rankabunplot(xr_2017)
+
+# Converting matrix to tibble removes species
+
+# Plot rank abundance curve for each year
+abun_fig <- ggplot() +
+  geom_point(data = xr_2014, aes(x = rank, y = logabun, shape = species_type, color = "2014"), size = 2) +
+  geom_point(data = xr_2015, aes(x = rank, y = logabun, shape = species_type, color = "2015"), size = 2) +
+  geom_point(data = xr_2016, aes(x = rank, y = logabun, shape = species_type, color = "2016"), size = 2) +
+  geom_point(data = xr_2017, aes(x = rank, y = logabun, shape = species_type, color = "2017"), size = 2) +
+  ggtitle("Pokegama Bay plant diversity 2014-2017") +
+  xlab("Species Rank") +
+  ylab("Species Abundance (logarithmic)") +
+  labs(color = "Year", shape = "Vegetation Type")
+  # + ggsave("diversity_prelim.png")
+
+abun_fig
+```
+
